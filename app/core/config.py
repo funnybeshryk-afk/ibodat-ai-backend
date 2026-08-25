@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: list[str] = ["*"] # Adjust for production
 
-    # Gemini
+    # Gemini Assistant
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-1.5-flash"
 

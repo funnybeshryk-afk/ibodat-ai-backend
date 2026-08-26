@@ -1,77 +1,62 @@
-from typing import List, Optional
+import json
+import re
+from pathlib import Path
+from typing import List
+
 from app.models.knowledge import KbItem
+
+# Ma'lumotlar endi shu faylda: app/data/knowledge_base.json
+# Yangi maqola qo'shish uchun kodni o'zgartirish shart emas — shu JSON faylga
+# bitta yangi obyekt qo'shish yetarli (id, title, category, content, language,
+# source, sourceReference maydonlari bilan).
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge_base.json"
+
+# Juda qisqa so'zlar ("va", "bu" va h.k.) qidiruvda hisobga olinmaydi.
+# 3 harfdan boshlab olamiz — "ota", "duo", "ilm" kabi diniy-lug'atda muhim
+# qisqa so'zlar shu yerga sig'ishi kerak.
+MIN_KEYWORD_LEN = 3
+
 
 class KnowledgeBaseService:
     def __init__(self):
-        # In-memory storage for testing, can be moved to JSON or DB later
-        self._data: List[KbItem] = [
-            # DUALAR
-            KbItem(
-                id="dua_ilm",
-                title="Ilm ziyoda bo'lishi uchun duo",
-                category="Ilm",
-                content="رَبِّ زِدْنِي عِلْمًا - Robbi zidnii ilman. Ey Robbim, ilmimni ziyoda qil.",
-                language="uz",
-                source="Qur'on",
-                sourceReference="Toha surasi, 114-oyat"
-            ),
-            KbItem(
-                id="dua_parents",
-                title="Ota-ona haqqiga duo",
-                category="Ota-ona",
-                content="رَبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا - Robbirhamhumaa kamaa robbayaanii sog'iiron. Ey Robbim, ular meni kichikligimda tarbiyalaganlaridek, Sen ham ularga rahm qil.",
-                language="uz",
-                source="Qur'on",
-                sourceReference="Isro surasi, 24-oyat"
-            ),
-            # HADISLAR
-            KbItem(
-                id="hadith_niyat",
-                title="Amallar niyatga bog'liq",
-                category="Niyat",
-                content="إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ - Albatta, amallar niyatlarga bog'liqdir. Har bir kishi niyat qilgan narsasiga erishadi.",
-                language="uz",
-                source="Sahih Buxoriy",
-                sourceReference="1-hadis"
-            ),
-            # NAMOZ BASICS
-            KbItem(
-                id="namoz_tahorat",
-                title="Tahorat olish tartibi",
-                category="Namoz",
-                content="Tahorat 8 bosqichdan iborat: Niyat, Qo'llarni yuvish, Og'iz chayish, Burun chayish, Yuzni yuvish, Qo'llarni tirsakkacha yuvish, Mash tortish, Oyoqlarni yuvish.",
-                language="uz",
-                source="Fiqhu-l-vazeh",
-                sourceReference="Tahorat bobi"
-            ),
-            KbItem(
-                id="namoz_shartlar",
-                title="Namozning shartlari",
-                category="Namoz",
-                content="Namozning 6 ta sharti bor: Tahoratli bo'lish, Poklik, Avrat yopiqligi, Vaqt, Qibla, Niyat.",
-                language="uz",
-                source="Muxtasaru-l-viqoya",
-                sourceReference="Namoz kitobi"
-            ),
-            # RUSSIAN SAMPLES
-            KbItem(
-                id="dua_ilm_ru",
-                title="Дуа для увеличения знаний",
-                category="Знания",
-                content="Господи! Приумножь мои знания (Рабби зидни ильман).",
-                language="ru",
-                source="Коран",
-                sourceReference="Сура Та Ха, аят 114"
-            )
-        ]
+        self._data: List[KbItem] = self._load_data()
+
+    def _load_data(self) -> List[KbItem]:
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            raw_items = json.load(f)
+        return [KbItem(**item) for item in raw_items]
+
+    def _words(self, text: str) -> List[str]:
+        return re.findall(r"\w+", text.lower(), flags=re.UNICODE)
+
+    def _keywords(self, query: str) -> List[str]:
+        return [w for w in self._words(query) if len(w) >= MIN_KEYWORD_LEN]
+
+    def _matches(self, keyword: str, haystack_words: List[str]) -> bool:
+        # Faqat bitta yo'nalishda: kalit so'z haystack so'zining PREFIKSI
+        # bo'lishi kerak (masalan, "namoz" -> "namozning" mos keladi).
+        # Teskarisini ("qil" -> "qilish" kabi) hisobga olmaymiz — aks holda
+        # ko'p fe'l ildizlari tasodifan har qanday so'zga mos kelib qolardi.
+        return any(w.startswith(keyword) for w in haystack_words)
 
     def search(self, query: str, language: str = "uz") -> List[KbItem]:
-        query = query.lower()
-        results = []
+        keywords = self._keywords(query)
+        if not keywords:
+            return []
+
+        scored: List[tuple[int, KbItem]] = []
         for item in self._data:
-            if item.language == language:
-                if query in item.title.lower() or query in item.content.lower() or query in item.category.lower():
-                    results.append(item)
-        return results
+            if item.language != language:
+                continue
+
+            haystack_words = self._words(f"{item.title} {item.content} {item.category}")
+            score = sum(1 for kw in keywords if self._matches(kw, haystack_words))
+            if score > 0:
+                scored.append((score, item))
+
+        # Ko'proq kalit so'z mos kelgan maqolalar birinchi bo'lib qaytariladi
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [item for _, item in scored[:5]]
+
 
 knowledge_base = KnowledgeBaseService()
